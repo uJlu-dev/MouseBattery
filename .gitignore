@@ -1,0 +1,8 @@
+*.obj
+*.pdb
+*.ilk
+*.lib
+*.exp
+.vs/
+.vscode/
+work/
