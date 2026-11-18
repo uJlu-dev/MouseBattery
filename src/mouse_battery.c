@@ -519,14 +519,60 @@ static int panel_dpi = 96;
 
 static int px(int value) { return MulDiv(value, panel_dpi, 96); }
 
-static void panel_box(HDC dc, RECT r, int radius, COLORREF color) {
-    HBRUSH brush = CreateSolidBrush(color);
-    HGDIOBJ old_brush = SelectObject(dc, brush);
-    HGDIOBJ old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
-    RoundRect(dc, r.left, r.top, r.right, r.bottom, px(radius), px(radius));
-    SelectObject(dc, old_pen);
-    SelectObject(dc, old_brush);
-    DeleteObject(brush);
+static const COLORREF panel_bg = RGB(30, 37, 48);
+
+static COLORREF blend_color(COLORREF front, COLORREF back, int coverage) {
+    return RGB((GetRValue(front) * coverage + GetRValue(back) * (16 - coverage)) / 16,
+               (GetGValue(front) * coverage + GetGValue(back) * (16 - coverage)) / 16,
+               (GetBValue(front) * coverage + GetBValue(back) * (16 - coverage)) / 16);
+}
+
+static void panel_box(HDC dc, RECT r, int diameter, COLORREF color, COLORREF background) {
+    int radius = px(diameter) / 2;
+    HRGN shape = CreateRoundRectRgn(r.left, r.top, r.right, r.bottom, 2 * radius, 2 * radius);
+    if (!shape) return;
+    SetDCBrushColor(dc, color);
+    FillRgn(dc, shape, GetStockObject(DC_BRUSH));
+    DeleteObject(shape);
+    for (int corner = 0; corner < 4; ++corner) {
+        for (int y = 0; y < radius; ++y) {
+            for (int x = 0; x < radius; ++x) {
+                int coverage = 0;
+                for (int j = 1; j < 8; j += 2) {
+                    for (int i = 1; i < 8; i += 2) {
+                        int dx = 8 * (radius - x) - i;
+                        int dy = 8 * (radius - y) - j;
+                        coverage += dx * dx + dy * dy <= 64 * radius * radius;
+                    }
+                }
+                SetPixelV(dc, corner & 1 ? r.right - 1 - x : r.left + x,
+                    corner & 2 ? r.bottom - 1 - y : r.top + y,
+                    blend_color(color, background, coverage));
+            }
+        }
+    }
+}
+
+static void panel_refresh_arrow(HDC dc, int left, int top, COLORREF background) {
+    const int size = px(18);
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            int coverage = 0;
+            for (int j = 1; j < 8; j += 2) {
+                for (int i = 1; i < 8; i += 2) {
+                    double dx = 18.0 * (x + i / 8.0) / size - 9;
+                    double dy = 18.0 * (y + j / 8.0) / size - 9;
+                    double rr = dx * dx + dy * dy;
+                    BOOL arc = rr >= 22 && rr <= 43 && (dy >= 0 || dx <= 0 || dx > -dy);
+                    BOOL head = dx >= 1 && dx <= 7 && dy >= -7 && dy <= -2 &&
+                        (dy >= -3.5 || dx >= 5.5);
+                    coverage += arc || head;
+                }
+            }
+            if (coverage) SetPixelV(dc, left + x, top + y,
+                blend_color(RGB(101, 223, 164), background, coverage));
+        }
+    }
 }
 
 static void panel_text(HDC dc, RECT r, const WCHAR *text, int size, int weight, COLORREF color) {
@@ -541,7 +587,7 @@ static void panel_text(HDC dc, RECT r, const WCHAR *text, int size, int weight, 
 }
 
 static LRESULT CALLBACK panel_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    static const WCHAR *labels[] = { L"Обновить сейчас", L"Запускать с Windows", L"Выход" };
+    static const WCHAR *labels[] = { L"Refresh now", L"Start with Windows", L"Exit" };
     static const int commands[] = { IDM_REFRESH, IDM_AUTOSTART, IDM_EXIT };
     switch (msg) {
     case WM_CREATE:
@@ -556,20 +602,24 @@ static LRESULT CALLBACK panel_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_NCDESTROY:
         g_panel = NULL;
         break;
+    case WM_ERASEBKGND:
+        return 1;
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC dc = BeginPaint(hwnd, &ps);
         RECT bounds = {0, 0, panel_width, panel_height};
-        panel_box(dc, bounds, 18, RGB(30, 37, 48));
+        SetDCBrushColor(dc, panel_bg);
+        FillRect(dc, &bounds, GetStockObject(DC_BRUSH));
         RECT card = {px(12), px(12), px(276), px(68)};
-        panel_box(dc, card, 12, RGB(42, 52, 66));
+        panel_box(dc, card, 12, RGB(42, 52, 66), panel_bg);
         if (g_icon) DrawIconEx(dc, px(22), px(24), g_icon, px(32), px(32), 0, NULL, DI_NORMAL);
         RECT title = {px(66), px(18), px(262), px(40)};
         RECT subtitle = {px(66), px(39), px(262), px(61)};
         WCHAR status[80];
-        if (g_percent < 0) lstrcpyW(status, L"Заряд недоступен");
-        else wsprintfW(status, g_estimated ? L"Заряд: ≈%d%%" : L"Заряд: %d%%", g_percent);
-        panel_text(dc, title, g_device_name, 15, FW_SEMIBOLD, RGB(245, 248, 255));
+        if (g_percent < 0) lstrcpyW(status, L"Battery unavailable");
+        else wsprintfW(status, g_estimated ? L"Battery level: ≈%d%%" : L"Battery level: %d%%", g_percent);
+        panel_text(dc, title, g_percent < 0 ? L"Wireless mouse" : g_device_name,
+            15, FW_SEMIBOLD, RGB(245, 248, 255));
         panel_text(dc, subtitle, status, 13, FW_NORMAL, RGB(170, 182, 200));
         EndPaint(hwnd, &ps);
         return 0;
@@ -578,10 +628,13 @@ static LRESULT CALLBACK panel_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         const DRAWITEMSTRUCT *item = (const DRAWITEMSTRUCT *)lp;
         RECT r = item->rcItem;
         HDC dc = item->hDC;
-        SetDCBrushColor(dc, RGB(30, 37, 48));
+        SetDCBrushColor(dc, panel_bg);
         FillRect(dc, &r, GetStockObject(DC_BRUSH));
-        if (item->itemState & (ODS_FOCUS | ODS_SELECTED))
-            panel_box(dc, r, 9, RGB(47, 60, 76));
+        COLORREF row = panel_bg;
+        if (item->itemState & (ODS_FOCUS | ODS_SELECTED)) {
+            row = RGB(47, 60, 76);
+            panel_box(dc, r, 9, row, panel_bg);
+        }
         RECT label = r;
         label.left += px(10);
         int index = (int)item->CtlID - IDM_REFRESH;
@@ -590,13 +643,13 @@ static LRESULT CALLBACK panel_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (item->CtlID == IDM_AUTOSTART) {
             BOOL on = autostart_enabled();
             RECT track = {r.right - px(49), px(8), r.right - px(9), px(28)};
-            panel_box(dc, track, 20, on ? RGB(26, 144, 94) : RGB(68, 81, 99));
+            COLORREF track_color = on ? RGB(26, 144, 94) : RGB(68, 81, 99);
+            panel_box(dc, track, 20, track_color, row);
             int left = on ? track.right - px(17) : track.left + px(3);
             RECT knob = {left, px(11), left + px(14), px(25)};
-            panel_box(dc, knob, 14, RGB(240, 246, 252));
+            panel_box(dc, knob, 14, RGB(240, 246, 252), track_color);
         } else if (item->CtlID == IDM_REFRESH) {
-            RECT arrow = {r.right - px(31), r.top, r.right, r.bottom};
-            panel_text(dc, arrow, L"↻", 19, FW_SEMIBOLD, RGB(101, 223, 164));
+            panel_refresh_arrow(dc, r.right - px(31), (r.bottom - px(18)) / 2, row);
         }
         return TRUE;
     }
@@ -640,7 +693,7 @@ static void show_menu(void) {
     g_panel = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, panel_class, APP_NAME,
         WS_POPUP, x, y, panel_width, panel_height, g_hwnd, NULL, GetModuleHandleW(NULL), NULL);
     if (!g_panel) return;
-    HRGN region = CreateRoundRectRgn(0, 0, panel_width + 1, panel_height + 1, px(18), px(18));
+    HRGN region = CreateRoundRectRgn(0, 0, panel_width, panel_height, px(18), px(18));
     if (region && !SetWindowRgn(g_panel, region, FALSE)) DeleteObject(region);
     ShowWindow(g_panel, SW_SHOW);
     SetForegroundWindow(g_panel);

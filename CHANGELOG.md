@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1 — 2026-11-18
+
+- English panel labels, smoother controls and refresh icon, and a clean dark panel edge.
+
 ## 1.1.0 — 2026-11-18
 
 - Dark tray panel with a battery summary, refresh button, and Windows startup switch.

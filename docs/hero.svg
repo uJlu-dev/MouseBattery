@@ -30,7 +30,7 @@
     <text x="0" y="190" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#9eabc0">Your mouse battery. One glance. Zero clutter.</text>
     <g transform="translate(0 226)" font-family="Segoe UI, Arial, sans-serif" font-size="18">
       <rect width="126" height="38" rx="19" fill="#ffffff" opacity=".08"/>
-      <text x="63" y="25" text-anchor="middle" fill="#dce6f5">&lt;40 KiB</text>
+      <text x="63" y="25" text-anchor="middle" fill="#dce6f5">42 KiB</text>
       <rect x="138" width="172" height="38" rx="19" fill="#ffffff" opacity=".08"/>
       <text x="224" y="25" text-anchor="middle" fill="#dce6f5">Native Win32</text>
       <rect x="322" width="170" height="38" rx="19" fill="#ffffff" opacity=".08"/>

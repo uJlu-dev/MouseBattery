@@ -32,18 +32,18 @@ jobs:
           name: MouseBattery-windows-x64
           path: dist/MouseBattery.exe
 
-      - name: Publish MouseBattery v1.1.0
+      - name: Publish MouseBattery v1.1.1
         if: github.ref == 'refs/heads/main'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v1.1.0 *> $null
+          gh release view v1.1.1 *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create v1.1.0 dist/MouseBattery.exe `
+            gh release create v1.1.1 dist/MouseBattery.exe `
               --target $env:GITHUB_SHA `
-              --title "MouseBattery v1.1.0" `
-              --notes "A dark battery panel with manual refresh and a Windows startup switch, plus a rounded gradient tray icon."
+              --title "MouseBattery v1.1.1" `
+              --notes "English panel labels, smoother controls and refresh icon, and a clean dark panel edge."
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
