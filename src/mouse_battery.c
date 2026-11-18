@@ -528,12 +528,14 @@ static COLORREF blend_color(COLORREF front, COLORREF back, int coverage) {
 }
 
 static void panel_box(HDC dc, RECT r, int diameter, COLORREF color, COLORREF background) {
-    int radius = px(diameter) / 2;
-    HRGN shape = CreateRoundRectRgn(r.left, r.top, r.right, r.bottom, 2 * radius, 2 * radius);
-    if (!shape) return;
+    int radius = min(px(diameter) / 2, min((r.right-r.left)/2, (r.bottom-r.top)/2));
     SetDCBrushColor(dc, color);
-    FillRgn(dc, shape, GetStockObject(DC_BRUSH));
-    DeleteObject(shape);
+    RECT middle = {r.left + radius, r.top, r.right - radius, r.bottom};
+    RECT left = {r.left, r.top + radius, r.left + radius, r.bottom - radius};
+    RECT right = {r.right - radius, r.top + radius, r.right, r.bottom - radius};
+    FillRect(dc, &middle, GetStockObject(DC_BRUSH));
+    FillRect(dc, &left, GetStockObject(DC_BRUSH));
+    FillRect(dc, &right, GetStockObject(DC_BRUSH));
     for (int corner = 0; corner < 4; ++corner) {
         for (int y = 0; y < radius; ++y) {
             for (int x = 0; x < radius; ++x) {
@@ -553,6 +555,14 @@ static void panel_box(HDC dc, RECT r, int diameter, COLORREF color, COLORREF bac
     }
 }
 
+static BOOL near_segment(double x, double y, double ax, double ay, double bx, double by) {
+    double vx = bx - ax, vy = by - ay;
+    double t = ((x - ax) * vx + (y - ay) * vy) / (vx * vx + vy * vy);
+    t = max(0.0, min(1.0, t));
+    double dx = x - ax - t * vx, dy = y - ay - t * vy;
+    return dx * dx + dy * dy <= 0.85 * 0.85;
+}
+
 static void panel_refresh_arrow(HDC dc, int left, int top, COLORREF background) {
     const int size = px(18);
     for (int y = 0; y < size; ++y) {
@@ -563,9 +573,10 @@ static void panel_refresh_arrow(HDC dc, int left, int top, COLORREF background) 
                     double dx = 18.0 * (x + i / 8.0) / size - 9;
                     double dy = 18.0 * (y + j / 8.0) / size - 9;
                     double rr = dx * dx + dy * dy;
-                    BOOL arc = rr >= 22 && rr <= 43 && (dy >= 0 || dx <= 0 || dx > -dy);
-                    BOOL head = dx >= 1 && dx <= 7 && dy >= -7 && dy <= -2 &&
-                        (dy >= -3.5 || dx >= 5.5);
+                    BOOL arc = rr >= 4.65 * 4.65 && rr <= 6.35 * 6.35 &&
+                        (dy >= 0 || dx <= 0 || dx <= -dy);
+                    BOOL head = near_segment(dx, dy, 3.89, -3.89, 0.1, -3.89) ||
+                        near_segment(dx, dy, 3.89, -3.89, 3.89, -7.68);
                     coverage += arc || head;
                 }
             }
@@ -645,8 +656,10 @@ static LRESULT CALLBACK panel_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             RECT track = {r.right - px(49), px(8), r.right - px(9), px(28)};
             COLORREF track_color = on ? RGB(26, 144, 94) : RGB(68, 81, 99);
             panel_box(dc, track, 20, track_color, row);
-            int left = on ? track.right - px(17) : track.left + px(3);
-            RECT knob = {left, px(11), left + px(14), px(25)};
+            int diameter = (track.bottom - track.top) - 2 * px(3);
+            int left = on ? track.right - px(3) - diameter : track.left + px(3);
+            int top = track.top + px(3);
+            RECT knob = {left, top, left + diameter, top + diameter};
             panel_box(dc, knob, 14, RGB(240, 246, 252), track_color);
         } else if (item->CtlID == IDM_REFRESH) {
             panel_refresh_arrow(dc, r.right - px(31), (r.bottom - px(18)) / 2, row);

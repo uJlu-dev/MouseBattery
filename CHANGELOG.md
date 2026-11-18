@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.2 — 2026-11-18
+
+- Redrew the refresh symbol and removed seams from the startup switch at different display scales.
+
 ## 1.1.1 — 2026-11-18
 
 - English panel labels, smoother controls and refresh icon, and a clean dark panel edge.
