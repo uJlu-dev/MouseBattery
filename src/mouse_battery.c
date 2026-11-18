@@ -572,14 +572,14 @@ static void panel_refresh_arrow(HDC dc, int left, int top, COLORREF background) 
                 for (int i = 1; i < 8; i += 2) {
                     double dx = 18.0 * (x + i / 8.0) / size - 9;
                     double dy = 18.0 * (y + j / 8.0) / size - 9;
-                    double rr = dx * dx + dy * dy;
-                    BOOL arc = rr >= 4.65 * 4.65 && rr <= 6.35 * 6.35 &&
-                        (dy >= 0 || dx <= 0 || dx <= -dy);
-                    /* A straight tangent separates the chevron from the arc. */
-                    BOOL shaft = near_segment(dx, dy, 3.89, -3.89, 6.72, -1.06);
-                    BOOL head = near_segment(dx, dy, 6.72, -1.06, 3.32, -1.06) ||
-                        near_segment(dx, dy, 6.72, -1.06, 6.72, -4.46);
-                    coverage += arc || shaft || head;
+                    double cy = dy - 0.9;
+                    double rr = dx * dx + cy * cy;
+                    BOOL arc = rr >= 5.55 * 5.55 && rr <= 7.25 * 7.25 &&
+                        (dx >= 0 || cy >= 0 || cy <= 0.70 * dx);
+                    BOOL cap = near_segment(dx, dy, -6.4, 0.9, -6.4, 1.0);
+                    BOOL head = near_segment(dx, dy, -5.25, -2.77, -4.03, -7.35) ||
+                        near_segment(dx, dy, -5.25, -2.77, -0.67, -1.55);
+                    coverage += arc || cap || head;
                 }
             }
             if (coverage) SetPixelV(dc, left + x, top + y,
