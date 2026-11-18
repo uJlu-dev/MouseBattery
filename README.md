@@ -8,7 +8,7 @@
 See the battery percentage at a glance — no window, installer, account, or vendor suite.
 
 [![Windows 10 / 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows11&logoColor=white)](#requirements)
-[![Size](https://img.shields.io/badge/single%20exe-32%20KB-2ea44f)](#why-mousebattery)
+[![Size](https://img.shields.io/badge/single%20exe-under%2040%20KiB-2ea44f)](#why-mousebattery)
 [![Language](https://img.shields.io/badge/native-C-555555?logo=c)](src/mouse_battery.c)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -19,7 +19,7 @@ See the battery percentage at a glance — no window, installer, account, or ven
 ## Why MouseBattery?
 
 - **The percentage is the icon.** No need to open G HUB or Windows Settings.
-- **Extremely small.** A single 32 KB native Win32 executable with no runtime or installer.
+- **Extremely small.** A native Win32 executable under 40 KiB, with no runtime or installer.
 - **Almost zero idle cost.** Event-driven UI, no background worker threads, and one battery query every five minutes.
 - **Portable.** Put the executable anywhere and run it.
 - **Private.** No network access, telemetry, analytics, or accounts.
@@ -41,7 +41,7 @@ Hardware support depends on the receiver and mouse firmware exposing a battery f
 1. Download `MouseBattery.exe` from the [latest release](../../releases/latest).
 2. Run it. There is no installer.
 3. Windows 11 may place the new icon behind the **^** tray arrow. Drag the green percentage icon onto the taskbar to keep it visible.
-4. Click the icon for **Refresh now**, **Start with Windows**, and **Exit**.
+4. Click the icon to open the dark battery panel. It shows the device and charge above a refresh button, a Windows startup switch, and an exit button. The panel labels are in Russian.
 
 The binary is not code-signed, so SmartScreen can show an *Unknown publisher* warning on first launch.
 Use **More info → Run anyway** after verifying the release checksum.
@@ -72,9 +72,8 @@ The release binary is written to `dist/MouseBattery.exe`. GitHub Actions runs th
 
 ## Resource use
 
-Measured on the original test system with a Logitech G305 SE:
+The current executable is about **39 KiB**. Startup and idle figures below were measured on the original test system with a Logitech G305 SE:
 
-- executable: **32 KB**;
 - private memory: approximately **1.9 MB**;
 - Task Manager working memory after startup: approximately **1.3 MB**;
 - idle CPU: **0%**;

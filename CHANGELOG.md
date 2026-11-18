@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.0 — 2026-11-18
+
+- Dark tray panel with a battery summary, refresh button, and Windows startup switch.
+- Rounded gradient tray icon with larger digits.
+
 ## 1.0.0 — 2026-11-18
 
 - First public release.

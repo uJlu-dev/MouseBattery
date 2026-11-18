@@ -382,26 +382,74 @@ static HICON make_icon(int percent, BOOL charging) {
     const int s = 32;
     HDC screen = GetDC(NULL);
     HDC dc = CreateCompatibleDC(screen);
-    HBITMAP color = CreateCompatibleBitmap(screen, s, s);
+    BITMAPINFO bitmap = {0};
+    bitmap.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bitmap.bmiHeader.biWidth = s;
+    bitmap.bmiHeader.biHeight = -s;
+    bitmap.bmiHeader.biPlanes = 1;
+    bitmap.bmiHeader.biBitCount = 32;
+    DWORD *pixels = NULL;
+    HBITMAP color = CreateDIBSection(screen, &bitmap, DIB_RGB_COLORS, (void **)&pixels, NULL, 0);
     HBITMAP mask = CreateBitmap(s, s, 1, 1, NULL);
+    if (!dc || !color || !mask) {
+        if (mask) DeleteObject(mask);
+        if (color) DeleteObject(color);
+        if (dc) DeleteDC(dc);
+        ReleaseDC(NULL, screen);
+        return NULL;
+    }
     HGDIOBJ old = SelectObject(dc, color);
-    COLORREF bg = percent < 0 ? RGB(95, 99, 104) :
-                  charging ? RGB(32, 150, 90) :
-                  percent <= 15 ? RGB(220, 55, 50) :
-                  percent <= 35 ? RGB(235, 160, 35) : RGB(35, 145, 85);
-    HBRUSH brush = CreateSolidBrush(bg);
-    RECT r = {0,0,s,s}; FillRect(dc, &r, brush);
-    DeleteObject(brush);
+    DWORD light = 0x42be86, dark = 0x08754b;
+    if (percent < 0) { light = 0x77818e; dark = 0x404854; }
+    else if (!charging && percent <= 15) { light = 0xe65e60; dark = 0xa12231; }
+    else if (!charging && percent <= 35) { light = 0xb87922; dark = 0x784207; }
+    const int span = 2 * (s - 1);
+    for (int y = 0; y < s; ++y) {
+        for (int x = 0; x < s; ++x) {
+            DWORD rgb = 0;
+            for (int shift = 0; shift <= 16; shift += 8) {
+                int hi = (light >> shift) & 255, lo = (dark >> shift) & 255;
+                rgb |= (DWORD)((hi * (span - x - y) + lo * (x + y)) / span) << shift;
+            }
+            pixels[y * s + x] = rgb;
+        }
+    }
+    RECT r = {0, 0, s, s};
     SetBkMode(dc, TRANSPARENT); SetTextColor(dc, RGB(255,255,255));
     WCHAR text[8];
     if (percent < 0) lstrcpyW(text, L"?"); else wsprintfW(text, L"%d", percent);
-    int height = percent >= 100 ? 17 : 21;
+    int height = percent >= 100 ? 17 : 22;
     HFONT font = CreateFontW(-height, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
         DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
     HGDIOBJ oldfont = SelectObject(dc, font);
     DrawTextW(dc, text, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, oldfont); DeleteObject(font); SelectObject(dc, old);
+    GdiFlush();
+    /* Supersample the rounded corners and premultiply RGB for the tray. */
+    const int radius = 8, samples = 4, edge = radius * samples;
+    for (int y = 0; y < s; ++y) {
+        for (int x = 0; x < s; ++x) {
+            int near_x = x < s / 2 ? x : s - 1 - x;
+            int near_y = y < s / 2 ? y : s - 1 - y;
+            int alpha = 255;
+            if (near_x < radius && near_y < radius) {
+                int inside = 0;
+                for (int j = 0; j < samples; ++j) {
+                    for (int i = 0; i < samples; ++i) {
+                        int dx = 2 * (edge - near_x * samples - i) - 1;
+                        int dy = 2 * (edge - near_y * samples - j) - 1;
+                        if (dx * dx + dy * dy <= 4 * edge * edge) ++inside;
+                    }
+                }
+                alpha = inside * 255 / (samples * samples);
+            }
+            DWORD rgb = pixels[y * s + x], argb = (DWORD)alpha << 24;
+            for (int shift = 0; shift <= 16; shift += 8)
+                argb |= (((rgb >> shift) & 255) * alpha / 255) << shift;
+            pixels[y * s + x] = argb;
+        }
+    }
 
     HDC maskdc = CreateCompatibleDC(screen);
     HGDIOBJ oldmask = SelectObject(maskdc, mask);
@@ -456,6 +504,7 @@ static void refresh_battery(void) {
         lstrcpynW(g_device_name, r.name, 96);
     } else g_percent = -1;
     HICON next = make_icon(g_percent, g_charging);
+    if (!next) return;
     HICON old = g_icon; g_icon = next;
     /* Explorer can be starting or restarting while the app launches. If an
        update says the icon is absent, add it again with the current value. */
@@ -463,21 +512,139 @@ static void refresh_battery(void) {
     if (old) DestroyIcon(old);
 }
 
+static HWND g_panel;
+static const WCHAR panel_class[] = L"MouseBatteryPanel";
+static int panel_width = 288, panel_height = 210;
+static int panel_dpi = 96;
+
+static int px(int value) { return MulDiv(value, panel_dpi, 96); }
+
+static void panel_box(HDC dc, RECT r, int radius, COLORREF color) {
+    HBRUSH brush = CreateSolidBrush(color);
+    HGDIOBJ old_brush = SelectObject(dc, brush);
+    HGDIOBJ old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
+    RoundRect(dc, r.left, r.top, r.right, r.bottom, px(radius), px(radius));
+    SelectObject(dc, old_pen);
+    SelectObject(dc, old_brush);
+    DeleteObject(brush);
+}
+
+static void panel_text(HDC dc, RECT r, const WCHAR *text, int size, int weight, COLORREF color) {
+    HFONT font = CreateFontW(-px(size), 0, 0, 0, weight, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH, L"Segoe UI");
+    HGDIOBJ old = font ? SelectObject(dc, font) : NULL;
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, color);
+    DrawTextW(dc, text, -1, &r, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+    if (font) { SelectObject(dc, old); DeleteObject(font); }
+}
+
+static LRESULT CALLBACK panel_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    static const WCHAR *labels[] = { L"Обновить сейчас", L"Запускать с Windows", L"Выход" };
+    static const int commands[] = { IDM_REFRESH, IDM_AUTOSTART, IDM_EXIT };
+    switch (msg) {
+    case WM_CREATE:
+        for (int i = 0; i < 3; ++i)
+            CreateWindowW(L"BUTTON", labels[i], WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+                px(12), px(78 + 40 * i), px(264), px(36), hwnd,
+                (HMENU)(INT_PTR)commands[i], GetModuleHandleW(NULL), NULL);
+        return 0;
+    case WM_ACTIVATE:
+        if (LOWORD(wp) == WA_INACTIVE) DestroyWindow(hwnd);
+        return 0;
+    case WM_NCDESTROY:
+        g_panel = NULL;
+        break;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(hwnd, &ps);
+        RECT bounds = {0, 0, panel_width, panel_height};
+        panel_box(dc, bounds, 18, RGB(30, 37, 48));
+        RECT card = {px(12), px(12), px(276), px(68)};
+        panel_box(dc, card, 12, RGB(42, 52, 66));
+        if (g_icon) DrawIconEx(dc, px(22), px(24), g_icon, px(32), px(32), 0, NULL, DI_NORMAL);
+        RECT title = {px(66), px(18), px(262), px(40)};
+        RECT subtitle = {px(66), px(39), px(262), px(61)};
+        WCHAR status[80];
+        if (g_percent < 0) lstrcpyW(status, L"Заряд недоступен");
+        else wsprintfW(status, g_estimated ? L"Заряд: ≈%d%%" : L"Заряд: %d%%", g_percent);
+        panel_text(dc, title, g_device_name, 15, FW_SEMIBOLD, RGB(245, 248, 255));
+        panel_text(dc, subtitle, status, 13, FW_NORMAL, RGB(170, 182, 200));
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_DRAWITEM: {
+        const DRAWITEMSTRUCT *item = (const DRAWITEMSTRUCT *)lp;
+        RECT r = item->rcItem;
+        HDC dc = item->hDC;
+        SetDCBrushColor(dc, RGB(30, 37, 48));
+        FillRect(dc, &r, GetStockObject(DC_BRUSH));
+        if (item->itemState & (ODS_FOCUS | ODS_SELECTED))
+            panel_box(dc, r, 9, RGB(47, 60, 76));
+        RECT label = r;
+        label.left += px(10);
+        int index = (int)item->CtlID - IDM_REFRESH;
+        if (index < 0 || index >= 3) return FALSE;
+        panel_text(dc, label, labels[index], 14, FW_NORMAL, RGB(233, 238, 247));
+        if (item->CtlID == IDM_AUTOSTART) {
+            BOOL on = autostart_enabled();
+            RECT track = {r.right - px(49), px(8), r.right - px(9), px(28)};
+            panel_box(dc, track, 20, on ? RGB(26, 144, 94) : RGB(68, 81, 99));
+            int left = on ? track.right - px(17) : track.left + px(3);
+            RECT knob = {left, px(11), left + px(14), px(25)};
+            panel_box(dc, knob, 14, RGB(240, 246, 252));
+        } else if (item->CtlID == IDM_REFRESH) {
+            RECT arrow = {r.right - px(31), r.top, r.right, r.bottom};
+            panel_text(dc, arrow, L"↻", 19, FW_SEMIBOLD, RGB(101, 223, 164));
+        }
+        return TRUE;
+    }
+    case WM_COMMAND:
+        if (LOWORD(wp) == IDM_EXIT) {
+            DestroyWindow(hwnd);
+            PostMessageW(g_hwnd, WM_COMMAND, IDM_EXIT, 0);
+        } else if (LOWORD(wp) == IDM_AUTOSTART) {
+            toggle_autostart();
+            InvalidateRect(GetDlgItem(hwnd, IDM_AUTOSTART), NULL, FALSE);
+        } else if (LOWORD(wp) == IDM_REFRESH) {
+            PostMessageW(g_hwnd, WM_COMMAND, IDM_REFRESH, 0);
+        }
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
 static void show_menu(void) {
-    POINT p; GetCursorPos(&p);
-    HMENU menu = CreatePopupMenu();
-    WCHAR status[160];
-    if (g_percent >= 0) wsprintfW(status, g_estimated ? L"%s — примерно %d%%" : L"%s — %d%%", g_device_name, g_percent);
-    else lstrcpyW(status, L"Заряд мыши недоступен");
-    AppendMenuW(menu, MF_STRING | MF_DISABLED, 900, status);
-    AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
-    AppendMenuW(menu, MF_STRING, IDM_REFRESH, L"Обновить сейчас");
-    AppendMenuW(menu, MF_STRING | (autostart_enabled() ? MF_CHECKED : 0), IDM_AUTOSTART, L"Запускать с Windows");
-    AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
-    AppendMenuW(menu, MF_STRING, IDM_EXIT, L"Выход");
-    SetForegroundWindow(g_hwnd);
-    TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, p.x, p.y, 0, g_hwnd, NULL);
-    DestroyMenu(menu);
+    if (g_panel) { SetForegroundWindow(g_panel); return; }
+    POINT anchor;
+    GetCursorPos(&anchor);
+    NOTIFYICONIDENTIFIER id = {sizeof(id)};
+    id.hWnd = g_hwnd;
+    id.uID = 1;
+    RECT icon;
+    BOOL located = SUCCEEDED(Shell_NotifyIconGetRect(&id, &icon));
+    if (located) { anchor.x = icon.right; anchor.y = icon.top; }
+    HMONITOR monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO info = {sizeof(info)};
+    if (!GetMonitorInfoW(monitor, &info)) return;
+    panel_dpi = GetDpiForWindow(g_hwnd);
+    if (!panel_dpi) panel_dpi = 96;
+    panel_width = px(288);
+    panel_height = px(210);
+    RECT work = info.rcWork;
+    int x = max(work.left, min(anchor.x - panel_width, work.right - panel_width));
+    int y = anchor.y - panel_height - px(6);
+    if (y < work.top && located) y = icon.bottom + px(6);
+    y = max(work.top, min(y, work.bottom - panel_height));
+    g_panel = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, panel_class, APP_NAME,
+        WS_POPUP, x, y, panel_width, panel_height, g_hwnd, NULL, GetModuleHandleW(NULL), NULL);
+    if (!g_panel) return;
+    HRGN region = CreateRoundRectRgn(0, 0, panel_width + 1, panel_height + 1, px(18), px(18));
+    if (region && !SetWindowRgn(g_panel, region, FALSE)) DeleteObject(region);
+    ShowWindow(g_panel, SW_SHOW);
+    SetForegroundWindow(g_panel);
+    if (g_panel) SetFocus(GetDlgItem(g_panel, IDM_REFRESH));
 }
 
 static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -491,14 +658,17 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         SetTimer(hwnd, TIMER_REFRESH, 200, NULL); return 0;
     case WM_TIMER:
         KillTimer(hwnd, TIMER_REFRESH); refresh_battery();
+        if (g_panel) InvalidateRect(g_panel, NULL, FALSE);
         SetTimer(hwnd, TIMER_REFRESH, POLL_MS, NULL); return 0;
     case WM_TRAY:
-        if (LOWORD(lp) == WM_CONTEXTMENU || LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == NIN_SELECT) show_menu();
+        if (LOWORD(lp) == WM_CONTEXTMENU || LOWORD(lp) == WM_RBUTTONUP ||
+            LOWORD(lp) == NIN_SELECT || LOWORD(lp) == NIN_KEYSELECT) show_menu();
         return 0;
     case WM_COMMAND:
         if (LOWORD(wp) == IDM_REFRESH) { KillTimer(hwnd, TIMER_REFRESH); refresh_battery(); SetTimer(hwnd, TIMER_REFRESH, POLL_MS, NULL); }
         else if (LOWORD(wp) == IDM_AUTOSTART) toggle_autostart();
         else if (LOWORD(wp) == IDM_EXIT) DestroyWindow(hwnd);
+        if (g_panel) InvalidateRect(g_panel, NULL, FALSE);
         return 0;
     case WM_DESTROY: {
         NOTIFYICONDATAW nid = { sizeof(nid) }; nid.hWnd = hwnd; nid.uID = 1;
@@ -520,17 +690,33 @@ int wmain(void) {
 #else
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command, int show) {
     (void)previous; (void)command; (void)show;
+    SetProcessDPIAware();
     HANDLE mutex = CreateMutexW(NULL, FALSE, L"Local\\MouseBattery.Singleton");
     if (!mutex || GetLastError() == ERROR_ALREADY_EXISTS) return 0;
     g_taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
     WNDCLASSW wc; ZeroMemory(&wc, sizeof(wc));
     wc.lpfnWndProc = window_proc; wc.hInstance = instance; wc.lpszClassName = L"MouseBatteryHiddenWindow";
     if (!RegisterClassW(&wc)) return 1;
+    wc.lpfnWndProc = panel_proc;
+    wc.lpszClassName = panel_class;
+    wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
+    if (!RegisterClassW(&wc)) return 1;
+    wc.lpszClassName = L"MouseBatteryHiddenWindow";
     /* A normal hidden top-level window is the most compatible notification-area owner. */
     g_hwnd = CreateWindowExW(0, wc.lpszClassName, APP_NAME, 0, 0,0,0,0, NULL, NULL, instance, NULL);
     if (!g_hwnd) return 1;
     MSG msg;
-    while (GetMessageW(&msg, NULL, 0, 0) > 0) { TranslateMessage(&msg); DispatchMessageW(&msg); }
+    while (GetMessageW(&msg, NULL, 0, 0) > 0) {
+        if (g_panel && (msg.hwnd == g_panel || IsChild(g_panel, msg.hwnd))) {
+            if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE) {
+                DestroyWindow(g_panel);
+                continue;
+            }
+            if (IsDialogMessageW(g_panel, &msg)) continue;
+        }
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
     CloseHandle(mutex);
     return 0;
 }

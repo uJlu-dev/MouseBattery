@@ -30,7 +30,7 @@
     <text x="0" y="190" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#9eabc0">Your mouse battery. One glance. Zero clutter.</text>
     <g transform="translate(0 226)" font-family="Segoe UI, Arial, sans-serif" font-size="18">
       <rect width="126" height="38" rx="19" fill="#ffffff" opacity=".08"/>
-      <text x="63" y="25" text-anchor="middle" fill="#dce6f5">32 KB</text>
+      <text x="63" y="25" text-anchor="middle" fill="#dce6f5">&lt;40 KiB</text>
       <rect x="138" width="172" height="38" rx="19" fill="#ffffff" opacity=".08"/>
       <text x="224" y="25" text-anchor="middle" fill="#dce6f5">Native Win32</text>
       <rect x="322" width="170" height="38" rx="19" fill="#ffffff" opacity=".08"/>
@@ -56,8 +56,8 @@
     <text x="34" y="248" font-size="16" fill="#e9eef7">Exit</text>
   </g>
 
-  <g transform="translate(0 370)">
-    <rect width="1200" height="60" rx="0 0 28 28" fill="#151b24"/>
+  <g>
+    <path d="M0 370H1200V402Q1200 430 1172 430H28Q0 430 0 402Z" fill="#151b24"/>
     <circle cx="1040" cy="400" r="4" fill="#7f8a99"/>
     <path d="M1060 396l7 7 7-7" fill="none" stroke="#aab3c0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
     <rect x="1087" y="383" width="34" height="34" rx="8" fill="url(#glow)"/>
